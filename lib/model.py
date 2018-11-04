@@ -316,7 +316,7 @@ def generator1(gen_inputs,reuse,FLAGS=None):
             net = pixelShuffler(net, scale=2)
             net = prelu_tf(net)
 
-    return net
+    return net        
 
 
 def generator2(gen_inputs,gen_output_channels,reuse):
@@ -387,6 +387,64 @@ def discriminator(dis_inputs, FLAGS=None):
                 net = tf.nn.sigmoid(net)
 
     return net
+
+
+
+#different discriminators 
+def discriminator_diff(dis_inputs, FLAGS=None):
+    if FLAGS is None:
+        raise ValueError('No FLAGS is provided for generator')
+
+    # Define the discriminator block
+    def discriminator_block(inputs, output_channel, kernel_size, stride, scope):
+        with tf.variable_scope(scope):
+            net = conv2(inputs, kernel_size, output_channel, stride, use_bias=False, scope='conv1')
+            net = batchnorm(net, FLAGS.is_training)
+            net = lrelu(net, 0.2)
+
+        return net
+
+    with tf.device('/gpu:0'):
+        with tf.variable_scope('discriminator_unit'):
+            # The input layer
+            with tf.variable_scope('input_stage'):
+                net = conv2(dis_inputs, 3, 16, 1, scope='conv')
+                net = lrelu(net, 0.2)
+
+            # The discriminator block part
+            # block 1
+            net = discriminator_block(net, 16, 3, 2, 'disblock_1')
+
+            # block 2
+            net = discriminator_block(net, 32, 3, 1, 'disblock_2')
+
+            # block 3
+            net = discriminator_block(net, 32, 3, 2, 'disblock_3')
+
+            # block 4
+            net = discriminator_block(net, 64, 3, 1, 'disblock_4')
+
+            # block 5
+            net = discriminator_block(net, 64, 3, 2, 'disblock_5')
+
+            # block 6
+            net = discriminator_block(net, 128, 3, 1, 'disblock_6')
+
+            # block_7
+            net = discriminator_block(net, 128, 3, 2, 'disblock_7')
+
+            # The dense layer 1
+            with tf.variable_scope('dense_layer_1'):
+                net = slim.flatten(net)
+                net = denselayer(net, 256)
+                net = lrelu(net, 0.2)
+
+            # The dense layer 2
+            with tf.variable_scope('dense_layer_2'):
+                net = denselayer(net, 256)
+                net = tf.nn.sigmoid(net)
+
+    return net    
 
 
 def VGG19_slim(input, type, reuse, scope):
@@ -608,21 +666,21 @@ def MAD_SRGAN(inputs, targets, FLAGS):
             with tf.variable_scope('mini_gen_4', reuse=False):
                 gen_output_4 = generator(inputs[:, int(3 * input_shape[1] / 8):, int(3 * input_shape[2] / 8):, :], output_channel, reuse=False, FLAGS=FLAGS)
 
-        else:
-            with tf.variable_scope('min_gen_common'):
+        else: 
+            with tf.variable_scope('min_gen_common'):       
                 gen_output_share_1 = generator1(inputs[:, :int(5 * input_shape[1] / 8), :int(5 * input_shape[2] / 8), :], reuse=tf.AUTO_REUSE, FLAGS=FLAGS)
                 gen_output_share_2 = generator1(inputs[:, :int(5 * input_shape[1] / 8), int(3 * input_shape[2] / 8):, :], reuse=tf.AUTO_REUSE, FLAGS=FLAGS)
                 gen_output_share_3 = generator1(inputs[:, int(3 * input_shape[1] / 8):, :int(5 * input_shape[2] / 8), :], reuse=tf.AUTO_REUSE, FLAGS=FLAGS)
                 gen_output_share_4 = generator1(inputs[:, int(3 * input_shape[1] / 8):, int(3 * input_shape[2] / 8):, :], reuse=tf.AUTO_REUSE, FLAGS=FLAGS)
 
-            with tf.variable_scope('mini_gen_1', reuse=False):
+            with tf.variable_scope('mini_gen_1', reuse=False): 
                 gen_output_1 = generator2(gen_output_share_1,output_channel,reuse=False)
-            with tf.variable_scope('mini_gen_2', reuse=False):
+            with tf.variable_scope('mini_gen_2', reuse=False): 
                 gen_output_2 = generator2(gen_output_share_2,output_channel,reuse=False)
-            with tf.variable_scope('mini_gen_3', reuse=False):
+            with tf.variable_scope('mini_gen_3', reuse=False): 
                 gen_output_3 = generator2(gen_output_share_3,output_channel,reuse=False)
-            with tf.variable_scope('mini_gen_4', reuse=False):
-                gen_output_4 = generator2(gen_output_share_4,output_channel,reuse=False)
+            with tf.variable_scope('mini_gen_4', reuse=False): 
+                gen_output_4 = generator2(gen_output_share_4,output_channel,reuse=False)         
 
 
         small_shape = gen_output_1.get_shape().as_list()
@@ -638,15 +696,47 @@ def MAD_SRGAN(inputs, targets, FLAGS):
         gen_output.set_shape([FLAGS.batch_size, FLAGS.crop_size*4, FLAGS.crop_size*4, 3])
 
     # Build the fake discriminator
-    with tf.name_scope('fake_discriminator'):
-        with tf.variable_scope('discriminator', reuse=False):
-            discrim_fake_output = discriminator(gen_output, FLAGS=FLAGS)
+    different_disc = True
 
-    # Build the real discriminator
-    with tf.name_scope('real_discriminator'):
-        with tf.variable_scope('discriminator', reuse=True):
-            discrim_real_output = discriminator(targets, FLAGS=FLAGS)
+    if different_disc is False:
+        with tf.name_scope('fake_discriminator'):
+            with tf.variable_scope('discriminator', reuse=False):
+                discrim_fake_output = discriminator(gen_output, FLAGS=FLAGS)
 
+        with tf.name_scope('real_discriminator'):
+            with tf.variable_scope('discriminator',reuse=True):
+                discrim_real_output = discriminator(targets,FLAGS=FLAGS)       
+
+    else:           
+        with tf.name_scope('fake_discriminator'):
+            with tf.variable_scope('discriminator', reuse=False):
+                discrim_fake_output = discriminator(gen_output, FLAGS=FLAGS)
+
+            with tf.variable_scope('min_disc_1',reuse=False):
+                    discrim_fake_output1 = discriminator_diff(gen_output_1, FLAGS=FLAGS)
+            with tf.variable_scope('min_disc_2',reuse=False):        
+                discrim_fake_output2 = discriminator_diff(gen_output_2, FLAGS=FLAGS)
+            with tf.variable_scope('min_disc_3',reuse=False):    
+                discrim_fake_output3 = discriminator_diff(gen_output_3, FLAGS=FLAGS)
+            with tf.variable_scope('min_disc_4',reuse=False):    
+                discrim_fake_output4 = discriminator_diff(gen_output_4, FLAGS=FLAGS)
+
+
+        with tf.name_scope('real_discriminator'):
+            target_shape = targets.get_shape().as_list()
+
+            with tf.variable_scope('discriminator',reuse=True):
+                discrim_real_output = discriminator(targets,FLAGS=FLAGS) 
+
+            with tf.variable_scope('min_disc_1',reuse=True):    
+                discrim_real_output1 = discriminator_diff(targets[:,:small_shape[1],:small_shape[2],:], FLAGS=FLAGS) 
+            with tf.variable_scope('min_disc_2',reuse=True):           
+                discrim_real_output2 = discriminator_diff(targets[:,:small_shape[1],(target_shape[2]-small_shape[2]):,:], FLAGS=FLAGS)
+            with tf.variable_scope('min_disc_3',reuse=True):    
+                discrim_real_output3 = discriminator_diff(targets[:,(target_shape[1]-small_shape[1]):,:small_shape[2],:], FLAGS=FLAGS)
+            with tf.variable_scope('min_disc_4',reuse=True):    
+                discrim_real_output4 = discriminator_diff(targets[:,(target_shape[1]-small_shape[1]):,(target_shape[2]-small_shape[2]):,:], FLAGS=FLAGS)
+   
     # Use the VGG54 feature
     if FLAGS.perceptual_mode == 'VGG54':
         with tf.name_scope('vgg19_1') as scope:
@@ -679,13 +769,13 @@ def MAD_SRGAN(inputs, targets, FLAGS):
             if FLAGS.perceptual_mode == 'MSE':
                 if L1:
                     content_loss = tf.reduce_mean(tf.reduce_sum(tf.abs(diff), axis=[3]))
-                else:
+                else:    
                     content_loss = tf.reduce_mean(tf.reduce_sum(tf.square(diff), axis=[3]))
             else:
                 if L1:
                     content_loss = FLAGS.vgg_scaling*tf.reduce_mean(tf.reduce_sum(tf.abs(diff), axis=[3]))
                 else:
-                    content_loss = FLAGS.vgg_scaling*tf.reduce_mean(tf.reduce_sum(tf.square(diff), axis=[3]))
+                    content_loss = FLAGS.vgg_scaling*tf.reduce_mean(tf.reduce_sum(tf.square(diff), axis=[3]))    
 
         with tf.variable_scope('overlap_loss'):
             # Compute the euclidean distance between the overlaps
@@ -712,11 +802,36 @@ def MAD_SRGAN(inputs, targets, FLAGS):
         print(content_loss.get_shape())
 
     # Calculating the discriminator loss
-    with tf.variable_scope('discriminator_loss'):
-        discrim_fake_loss = tf.log(1 - discrim_fake_output + FLAGS.EPS)
-        discrim_real_loss = tf.log(discrim_real_output + FLAGS.EPS)
+    if different_disc is False:
+        with tf.variable_scope('discriminator_loss'):
+            discrim_fake_loss = tf.log(1 - discrim_fake_output + FLAGS.EPS)
+            discrim_real_loss = tf.log(discrim_real_output + FLAGS.EPS)
 
-        discrim_loss = tf.reduce_mean(-(discrim_fake_loss + discrim_real_loss))
+            discrim_loss = tf.reduce_mean(-(discrim_fake_loss + discrim_real_loss))
+
+    else:
+        with tf.variable_scope('discriminator_loss'):
+            discrim_fake_loss = tf.log(1 - discrim_fake_output + FLAGS.EPS)
+            discrim_real_loss = tf.log(discrim_real_output + FLAGS.EPS)
+
+            discrim_loss = tf.reduce_mean(-(discrim_fake_loss + discrim_real_loss))
+
+            discrim_fake_loss1 = tf.log(1 - discrim_fake_output1 + FLAGS.EPS)
+            discrim_fake_loss2 = tf.log(1 - discrim_fake_output2 + FLAGS.EPS)
+            discrim_fake_loss3 = tf.log(1 - discrim_fake_output3 + FLAGS.EPS)
+            discrim_fake_loss4 = tf.log(1 - discrim_fake_output4 + FLAGS.EPS)
+
+            discrim_real_loss1 = tf.log(discrim_real_output1 + FLAGS.EPS)
+            discrim_real_loss2 = tf.log(discrim_real_output2 + FLAGS.EPS)
+            discrim_real_loss3 = tf.log(discrim_real_output3 + FLAGS.EPS)
+            discrim_real_loss4 = tf.log(discrim_real_output4 + FLAGS.EPS)
+
+            discrim_loss1 = tf.reduce_mean(-(discrim_fake_loss1 + discrim_real_loss1))
+            discrim_loss2 = tf.reduce_mean(-(discrim_fake_loss2 + discrim_real_loss2))
+            discrim_loss3 = tf.reduce_mean(-(discrim_fake_loss3 + discrim_real_loss3))
+            discrim_loss4 = tf.reduce_mean(-(discrim_fake_loss4 + discrim_real_loss4))
+
+            discrim_loss = discrim_loss1 + discrim_loss2 + discrim_loss3 + discrim_loss4 + discrim_loss
 
     # Define the learning rate and global step
     with tf.variable_scope('get_learning_rate_and_global_step'):
